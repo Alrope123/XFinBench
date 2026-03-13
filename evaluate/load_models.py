@@ -1,17 +1,17 @@
 import os
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig
+from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig, AutoConfig
 from transformers import MllamaForConditionalGeneration, AutoProcessor
-from openai import OpenAI
-import anthropic
-import google.generativeai as genai
+# from openai import OpenAI
+# import anthropic
+# import google.generativeai as genai
 import base64
-from PIL import Image
+# from PIL import Image
 
 class build_model:
     def __init__(self, model_name: str,):
         self.project_path = os.environ["PROJECT_PATH"]
-        if 'gpt' in model_name or 'o1' in model_name:
+        if 'gpt' in model_name:
             self.client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"),)
         elif 'claude' in model_name:
             self.client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
@@ -29,6 +29,21 @@ class build_model:
             self.tokenizer = AutoTokenizer.from_pretrained(model_path)
             self.model = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype=torch.bfloat16, device_map="auto")
             self.terminators = [self.tokenizer.eos_token_id, self.tokenizer.convert_tokens_to_ids("<|eot_id|>")]
+        elif 'Qwen/' in model_name:
+            self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+            self.model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16, device_map="auto")
+            # self.terminators = [self.tokenizer.eos_token_id, self.tokenizer.convert_tokens_to_ids("<|eot_id|>")]
+        else:
+            from flex_qwen2_moe import FlexQwen2MoeForCausalLM, FlexQwen2MoeConfig
+            print("Registering local architectures...")
+            # Register configs to AutoConfig
+            AutoConfig.register("flex_qwen2_moe", FlexQwen2MoeConfig)
+            # Register models to AutoModelForCausalLM
+            AutoModelForCausalLM.register(FlexQwen2MoeConfig, FlexQwen2MoeForCausalLM)
+            self.model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16, device_map="auto")
+            self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+            # self.terminators = [self.tokenizer.eos_token_id, self.tokenizer.convert_tokens_to_ids("<|eot_id|>")]
+
 
     # Function to encode the image
     def encode_image(self, image_path):
@@ -37,13 +52,7 @@ class build_model:
 
     def get_model_response(self, sys_msg, msg, model_name, image_pt='', sys_msg_bool=1, max_token_=1024):
         # Prepare message
-        if 'o1' in model_name:
-            if sys_msg_bool==1:
-                msg = sys_msg + '\n' + msg
-            else:
-                msg = msg
-            messages = [{"role": "user", "content": msg}]
-        elif 'gpt' in model_name:
+        if 'gpt' in model_name:
             if sys_msg_bool==1:
                 messages = [{"role": "system", "content": sys_msg},]
             else:
@@ -108,7 +117,7 @@ class build_model:
                 ]
         
         # Ask the model to answer questions
-        if 'gpt' in model_name or 'o1' in model_name:
+        if 'gpt' in model_name:
             completion = self.client.chat.completions.create(
                 model= model_name,
                 messages=messages,
@@ -173,6 +182,28 @@ class build_model:
                 top_p=0.9,
                 )
             output_ids = outputs[0][input_ids.shape[-1]:]
+            reply = self.tokenizer.decode(output_ids, skip_special_tokens=True)
+            num_token = len(output_ids)
+            return reply, num_token
+        else:
+            model_inputs = self.tokenizer.apply_chat_template(
+                messages,
+                add_generation_prompt=True,
+                return_tensors="pt",
+                return_dict=True,
+            ).to(self.model.device)
+
+            outputs = self.model.generate(
+                **model_inputs,
+                max_new_tokens=max_token_,
+                eos_token_id=self.tokenizer.eos_token_id if self.tokenizer.eos_token_id is not None else None,
+                pad_token_id=self.tokenizer.eos_token_id if self.tokenizer.eos_token_id is not None else None,
+                do_sample=True,
+                temperature=0.6,
+                top_p=0.9,
+            )
+
+            output_ids = outputs[0][model_inputs["input_ids"].shape[-1]:]
             reply = self.tokenizer.decode(output_ids, skip_special_tokens=True)
             num_token = len(output_ids)
             return reply, num_token

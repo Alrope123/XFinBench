@@ -11,6 +11,9 @@ import torch
 from load_retriever import build_retriever
 from load_models import build_model
 from eval_metrics import get_calcu_error_bool, get_calcu_bool, resp2ans
+from tqdm import tqdm
+
+random.seed(2026)
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", default='FinBench', type=str, help="FinBench, BizBench, KnowledgeFMATH")
@@ -22,6 +25,8 @@ parser.add_argument("--retri_type", default='free', type=str, help="no, free, go
 parser.add_argument("--retriever", default='bm25', type=str, help="bm25, ada")
 parser.add_argument("--top_k_retr", default=3, type=int, help="normally set to 3")
 parser.add_argument("--max_token", default=1024, type=int, help="max number of output tokens")
+parser.add_argument("--first_half", action='store_true', help="whether to evaluate only the first half of the sampled questions for quick test")
+parser.add_argument("--second_half", action='store_true', help="whether to evaluate only the second half of the sampled questions for quick test")
 args = parser.parse_args()
 arg_dict=args.__dict__
 
@@ -41,11 +46,19 @@ project_path = os.environ["PROJECT_PATH"]
 
 # Load Model and Retriever
 model = build_model(model_)
-retriever = build_retriever(retri_type, top_k_retr)
+# retriever = build_retriever(retri_type, top_k_retr)
 
 # Load QA Data
 qa_data = pd.read_csv(f'{project_path}/dataset/test_set.csv')
 qa_data = qa_data[qa_data['task']==task_]
+# Randomly sample 100 questions for evaluation
+qa_data = qa_data.sample(n=100, random_state=2026).reset_index(drop=True)
+
+if args.first_half:
+    qa_data = qa_data.head(len(qa_data) // 2)
+elif args.second_half:
+    qa_data = qa_data.tail(len(qa_data) // 2)
+
 qa_data['model_response'] = ''
 qa_data['model_answer'] = ''
 qa_data['model_ans_bool'] = 0
@@ -65,11 +78,13 @@ else:
 # Save with excuting date and time
 time_ = datetime.now()
 current_time = f"{time_.year}{time_.month}{time_.day}_{time_.hour}{time_.minute}"
-save_path = f"{project_path}/results/{dataset_}/{task_}/{model_}_{reason_type}_{retri_type}_{retriever_}_{str(top_k_retr)}_{max_token_}_{current_time}_sys{sys_msg_bool}.csv"
+save_path = f"{project_path}/results/{dataset_}/{task_}/{model_.replace('/', '_')}_{reason_type}_{retri_type}_{retriever_}_{str(top_k_retr)}_{max_token_}_{current_time}_sys{sys_msg_bool}.csv"
+if not os.path.exists(f"{project_path}/results/{dataset_}/{task_}/"):
+    os.makedirs(f"{project_path}/results/{dataset_}/{task_}/")
 print(f"\n\nSAVE PATH: {save_path}\n")
 
 # Evaluation Start
-for idx in qa_data.index.tolist():
+for idx in tqdm(qa_data.index.tolist(), desc="Evaluating"):
     qa_uni_id_ = qa_data.loc[idx]['id']
     question_ = qa_data.loc[idx]['question']
     choi_ = qa_data.loc[idx]['choice']
@@ -95,12 +110,12 @@ for idx in qa_data.index.tolist():
     else:
         prompt_idx = prompt_ques.format(knowledge='',question=question_)
 
-    try:
-        response_, num_token_ = model.get_model_response(sys_msg, prompt_idx, model_, fg_path, sys_msg_bool, max_token_)
-    except Exception as e:
-        response_ = ""
-        num_token_ = 0
-        print(f"Error when calling model! {e}")
+    # try:
+    response_, num_token_ = model.get_model_response(sys_msg, prompt_idx, model_, fg_path, sys_msg_bool, max_token_)
+    # except Exception as e:
+    #     response_ = ""
+    #     num_token_ = 0
+    #     print(f"Error when calling model! {e}")
     
     if reason_type=='CoT' or reason_type=='DA':
         model_ans = resp2ans(task_, response_)
