@@ -51,8 +51,11 @@ model = build_model(model_)
 # retriever = build_retriever(retri_type, top_k_retr)
 
 # Load QA Data
-qa_data = pd.read_csv(f'{project_path}/dataset/test_set.csv')
-qa_data = qa_data[qa_data['task'] == task_]
+if task_ != "finqa":
+    qa_data = pd.read_csv(f'{project_path}/dataset/test_set.csv')
+    qa_data = qa_data[qa_data['task'] == task_]
+else:
+    qa_data = pd.read_json(f'{project_path}/dataset/finqa_calcu_test.json', lines=True)
 qa_data = qa_data.sample(n=100, random_state=2026).reset_index(drop=True)
 
 if args.first_half:
@@ -73,7 +76,7 @@ with open(file=f'{project_path}/evaluate/prompt_template/{task_}_{reason_type}.t
 if sys_msg_bool == 0:
     sys_msg = ''
 else:
-    with open(file=f'{project_path}/evaluate/prompt_template/{task_}_{reason_type}.txt', mode='r', encoding='UTF-8') as fp:
+    with open(file=f'{project_path}/evaluate/prompt_template/Sys_msg/{reason_type}.txt', mode='r', encoding='UTF-8') as fp:
         sys_msg = fp.read()
 
 # Save with executing date and time
@@ -95,24 +98,30 @@ for start in tqdm(range(0, len(all_indices), batch_size_), desc="Evaluating"):
 
     # prepare batch inputs
     for idx in batch_indices:
-        question_ = qa_data.loc[idx]['question']
-        choi_ = qa_data.loc[idx]['choice']
+        if 'finqa' not in task_:
+            question_ = qa_data.loc[idx]['question']
+            choi_ = qa_data.loc[idx]['choice']
 
-        if pd.isnull(qa_data.loc[idx]['figure']) == 0:
-            fg_nm = qa_data.loc[idx]['figure']
-            fg_path = f"./dataset/figures/{fg_nm}"
-            if '.png' not in fg_path:
-                if 'p' == fg_nm[0] or 's' == fg_nm[0]:
-                    fg_path = fg_path + '.png'
-                else:
-                    fg_path = fg_path + '.jpg'
+            if pd.isnull(qa_data.loc[idx]['figure']) == 0:
+                fg_nm = qa_data.loc[idx]['figure']
+                fg_path = f"./dataset/figures/{fg_nm}"
+                if '.png' not in fg_path:
+                    if 'p' == fg_nm[0] or 's' == fg_nm[0]:
+                        fg_path = fg_path + '.png'
+                    else:
+                        fg_path = fg_path + '.jpg'
+            else:
+                fg_path = ''
         else:
+            query_ = qa_data.loc[idx]['query']
             fg_path = ''
 
         exce_time = datetime.now()
         qa_data.loc[idx, 'execute_time'] = str(exce_time)
 
-        if 'mcq' in task_:
+        if 'finqa' in task_:
+            prompt_idx = prompt_ques.format(query=query_)
+        elif 'mcq' in task_:
             prompt_idx = prompt_ques.format(knowledge='', question=question_, choices=choi_)
         else:
             prompt_idx = prompt_ques.format(knowledge='', question=question_)
@@ -132,7 +141,7 @@ for start in tqdm(range(0, len(all_indices), batch_size_), desc="Evaluating"):
 
     # keep old downstream logic as much as possible
     for idx, response_, num_token_ in zip(batch_indices, responses_, num_tokens_):
-        ans_ = qa_data.loc[idx]['ground_truth']
+        ans_ = qa_data.loc[idx]['ground_truth'] if 'finqa' not in task_ else qa_data.loc[idx]['answer']
 
         if reason_type == 'CoT' or reason_type == 'DA':
             model_ans = resp2ans(task_, response_)
@@ -158,7 +167,7 @@ for start in tqdm(range(0, len(all_indices), batch_size_), desc="Evaluating"):
 
         qa_data.loc[idx, 'model_response'] = response_
 
-        if 'calcu' in task_:
+        if 'calcu' in task_ or 'finqa' in task_:
             # try:
             #     qa_data.loc[idx, 'model_answer'] = model_ans
             #     if type(ans_) == str:
@@ -193,7 +202,7 @@ for start in tqdm(range(0, len(all_indices), batch_size_), desc="Evaluating"):
 qa_data.to_csv(save_path)
 qa_data.to_json(save_path.replace('.csv', '.json'), orient='records', lines=True)
 
-if 'calcu' in task_:
+if 'calcu' in task_ or 'finqa' in task_:
     em_bool_list = qa_data['model_ans_bool'].tolist()
     err5_bool_list = qa_data['model_ans_err5_bool'].tolist()
     em_acc = sum(em_bool_list) / len(em_bool_list)

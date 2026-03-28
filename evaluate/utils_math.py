@@ -328,6 +328,7 @@ def extract_answers(results):
     return all_answers
 
 def process_results(ground_answer, results):
+    ground_answer = normalize_final_answer(str(ground_answer))
     metrics: dict = {}
     extracted_answer = last_boxed_only_string(results[0])
     if extracted_answer is None:
@@ -352,6 +353,16 @@ def process_results(ground_answer, results):
     metrics["exact_match_flex"] = max_flex_match
     if all_extracted_answers:
         metrics["model_answer"] = all_extracted_answers[0]
+
+    got_number = False
+    for answer in all_extracted_answers:
+        try:
+            float(answer)
+            got_number = True
+            break
+        except ValueError:
+            continue
+    metrics["got_number"] = got_number
     return metrics
 
 
